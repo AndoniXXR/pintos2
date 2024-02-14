@@ -38,9 +38,6 @@ static struct thread *initial_thread;
 /* Lock used by allocate_tid(). */
 static struct lock tid_lock;
 
-
-
-
 /* Stack frame for kernel_thread(). */
 struct kernel_thread_frame
   {
@@ -166,12 +163,8 @@ thread_print_stats (void)
    The code provided sets the new thread's `priority' member to
    PRIORITY, but no actual priority scheduling is implemented.
    Priority scheduling is the goal of Problem 1-3. */
-
-   // implementacion de crear un thread///
-
-
 tid_t
-thread_create(const char *name, int priority,
+thread_create (const char *name, int priority,
                thread_func *function, void *aux)
 {
   struct thread *t;
@@ -180,45 +173,48 @@ thread_create(const char *name, int priority,
   struct switch_threads_frame *sf;
   tid_t tid;
 
-  ASSERT(function != NULL);
+  ASSERT (function != NULL);
 
-  // Asigna memoria para el nuevo hilo.
-  t = palloc_get_page(PAL_ZERO);
+  /* Allocate thread. */
+  t = palloc_get_page (PAL_ZERO);
   if (t == NULL)
     return TID_ERROR;
 
-  // Inicializa el hilo.
-  init_thread(t, name, priority);
-  tid = t->tid = allocate_tid();
+  /* Initialize thread. */
+  init_thread (t, name, priority);
+  tid = t->tid = allocate_tid ();
 
-  // Marco de pila para kernel_thread().
-  kf = alloc_frame(t, sizeof *kf);
+  /* Stack frame for kernel_thread(). */
+  kf = alloc_frame (t, sizeof *kf);
   kf->eip = NULL;
   kf->function = function;
   kf->aux = aux;
 
-  // Marco de pila para switch_entry().
-  ef = alloc_frame(t, sizeof *ef);
-  ef->eip = (void (*)(void))kernel_thread;
+  /* Stack frame for switch_entry(). */
+  ef = alloc_frame (t, sizeof *ef);
+  ef->eip = (void (*) (void)) kernel_thread;
 
-  // Marco de pila para switch_threads().
-  sf = alloc_frame(t, sizeof *sf);
+  /* Stack frame for switch_threads(). */
+  sf = alloc_frame (t, sizeof *sf);
   sf->eip = switch_entry;
   sf->ebp = 0;
 
-  // Agrega el hilo a la cola de ejecución.
-  thread_unblock(t);
+  /* Add to run queue. */
+  thread_unblock (t);
 
-  // Cambios adicionales para manejar la prioridad al crear un nuevo hilo.
-  enum intr_level old_level = intr_disable();
-  if (t->priority > thread_current()->priority) {
-    thread_yield();
+  /* $$$$ Our magical changes here */
+  enum intr_level old_level = intr_disable ();
+  struct thread *runningThread=thread_current();
+  if(runningThread!=idle_thread){
+    if(t->priority >runningThread->priority)    //can't use priority_comparator as it takes list elements
+      thread_yield();
+
   }
-  intr_set_level(old_level);
+  intr_set_level (old_level);
+  /* $$$$ Our magical changes end  */
 
   return tid;
 }
-
 
 /* Puts the current thread to sleep.  It will not be scheduled
    again until awoken by thread_unblock().
@@ -245,26 +241,21 @@ thread_block (void)
    it may expect that it can atomically unblock a thread and
    update other data. */
 void
-thread_unblock(struct thread *t)
+thread_unblock (struct thread *t)
 {
   enum intr_level old_level;
 
-  ASSERT(is_thread(t)); // Asegura que el argumento sea un hilo válido.
+  ASSERT (is_thread (t));
 
-  old_level = intr_disable(); // Deshabilita las interrupciones.
+  old_level = intr_disable ();
+  ASSERT (t->status == THREAD_BLOCKED);
+  /* $$$$ Our magical changes here $$$$ */
+  list_insert_ordered (&ready_list, &t->elem,(list_less_func *) &priority_comparator,NULL);
+  /* $$$$ Our magical changes end $$$$ */
+  t->status = THREAD_READY;
 
-  ASSERT(t->status == THREAD_BLOCKED); // Asegura que el hilo esté bloqueado.
-
-  // Inserta el hilo en la lista de ejecución de manera ordenada por prioridad.
-  // La función list_insert_ordered ordena automáticamente la lista según el comparador de prioridad.
-  list_insert_ordered(&ready_list, &t->elem, (list_less_func *)&priority_comparator, NULL);
-
-  t->status = THREAD_READY; // Actualiza el estado del hilo a listo.
-
-  intr_set_level(old_level); // Restaura el nivel de interrupción.
+  intr_set_level (old_level);
 }
-
-
 
 /* Returns the name of the running thread. */
 const char *
@@ -321,93 +312,56 @@ thread_exit (void)
   NOT_REACHED ();
 }
 
-
-// La función thread_yield se encarga de ceder el control del procesador
-// al siguiente hilo listo para ejecutarse. Este mecanismo permite que otros
-// hilos de igual o mayor prioridad tengan la oportunidad de ejecutarse,
-// mejorando la equidad en la asignación de recursos del sistema operativo.
-
+/* Yields the CPU.  The current thread is not put to sleep and
+   may be scheduled again immediately at the scheduler's whim. */
 void
-thread_yield(void)
+thread_yield (void)
 {
-  // Obtiene el hilo actual.
-  struct thread *current_thread = thread_current();
-  // Deshabilita las interrupciones para garantizar la consistencia durante la operación.
-  enum intr_level old_level = intr_disable();
+  struct thread *cur = thread_current ();
+  enum intr_level old_level;
 
-  // Verifica que la función no se llame desde un contexto de interrupción.
-  ASSERT(!intr_context());
+  ASSERT (!intr_context ());
 
-  // Si el hilo actual no es el hilo idle, lo agrega a la lista de ejecución.
-  // Esto permite que otros hilos de igual o mayor prioridad puedan ejecutar.
-  if (current_thread != idle_thread)
-  {
-    // Inserta el hilo en la lista de ejecución de manera ordenada por prioridad.
-    // Utiliza list_insert_ordered para mantener la lista ordenada según el comparador de prioridad.
-    list_insert_ordered(&ready_list, &current_thread->elem, (list_less_func *)&priority_comparator, NULL);
-  }
-
-  // Actualiza el estado del hilo actual a THREAD_READY.
-  current_thread->status = THREAD_READY;
-
-  // Llama a la función schedule para determinar qué hilo ejecutar a continuación.
-  schedule();
-
-  // Restaura el nivel de interrupción a su estado original.
-  intr_set_level(old_level);
+  old_level = intr_disable ();
+  /* $$$$ Our magical changes here */
+  if (cur != idle_thread)
+    list_insert_ordered (&ready_list, &cur->elem,(list_less_func *) &priority_comparator,NULL);
+  //removed simple list push_back, now inserted in sorted order according to priority
+  /* $$$$ Our magical changes end  */
+  cur->status = THREAD_READY;
+  schedule ();
+  intr_set_level (old_level);
 }
 
-
-
-
-
-
+/* $$$$ Our magical changes here */
 bool sleeptime_comparator(struct list_elem *a, struct list_elem *b, void *aux)
 {
-  // Se obtienen las estructuras de hilo correspondientes a los elementos de la lista.
-  struct thread *thread_one = list_entry(a, struct thread, elem);
-  struct thread *thread_two = list_entry(b, struct thread, elem);
-
-  // Se realiza una operación adicional para comparar los tiempos de espera de los hilos.
-  int comparision_result = thread_one->sleepingtime - thread_two->sleepingtime;
-
-  // Se retorna true si el tiempo de espera del primer hilo es menor que el segundo, de lo contrario, false.
-  return comparision_result < 0;
+  struct thread *thread_one = list_entry (a, struct thread, elem); //find this list element a
+  struct thread *thread_two = list_entry (b, struct thread, elem); //find this list element b
+  if(thread_one->sleepingtime< thread_two->sleepingtime)
+    return true;
+  else return false;
 }
 
+bool priority_comparator_reverse(struct list_elem *a, struct list_elem *b, void *aux){
+  struct thread *thread_one = list_entry (a, struct thread, elem);  //find this list element a
+  struct thread *thread_two = list_entry (b, struct thread, elem);  //find this list element b
+  if(thread_one->priority< thread_two->priority)
+    return true;
+  else return false;
 
-
-
-bool priority_comparator_reverse(struct list_elem *a, struct list_elem *b, void *aux)
-{
-  // Se obtienen las estructuras de hilo correspondientes a los elementos de la lista.
-  struct thread *thread_one = list_entry(a, struct thread, elem);
-  struct thread *thread_two = list_entry(b, struct thread, elem);
-
-  // Se realiza una operación adicional para comparar las prioridades en orden inverso.
-  int comparision_result = thread_two->priority - thread_one->priority;
-
-  // Se retorna true si la prioridad del segundo hilo es mayor que la del primero, de lo contrario, false.
-  return comparision_result > 0;
 }
-
-
-
 
 bool priority_comparator(struct list_elem *a, struct list_elem *b, void *aux)
 {
-  // Se obtienen las estructuras de hilo correspondientes a los elementos de la lista.
-  struct thread *thread_one = list_entry(a, struct thread, elem);
-  struct thread *thread_two = list_entry(b, struct thread, elem);
-
-  // Se realiza una operación adicional para comparar las prioridades.
-  int comparision_result = thread_one->priority - thread_two->priority;
-
-  // Se retorna true si la prioridad del primer hilo es mayor que la del segundo, de lo contrario, false.
-  return comparision_result > 0;
+  struct thread *thread_one = list_entry (a, struct thread, elem);  //find this list element a
+  struct thread *thread_two = list_entry (b, struct thread, elem);  //find this list element b
+  if(thread_one->priority> thread_two->priority)
+    return true;
+  else return false;
 }
 
-
+/* $$$$ Our magical changes end  */
 
 
 
@@ -428,38 +382,34 @@ thread_foreach (thread_action_func *func, void *aux)
     }
 }
 
-
-
-/*AQUI SE PONEN LAS PRIORIDADES*/
-void thread_set_priority(int new_priority)
+/* Sets the current thread's priority to NEW_PRIORITY. */
+void
+thread_set_priority (int new_priority)
 {
-  // Deshabilita las interrupciones para realizar cambios atómicos.
-  enum intr_level old_level = intr_disable();
 
-  // Establece la nueva prioridad base del hilo.
+  /* $$$$ Our magical changes here */
+  enum intr_level old_level;
+  old_level=intr_disable();
+
   thread_current()->basepriority = new_priority;
 
-  // Si la lista de donaciones está vacía o la nueva prioridad es mayor, actualiza la prioridad actual.
-  if (list_empty(&thread_current()->donation_list) || new_priority > thread_current()->priority)
+  if(list_empty(&thread_current()->donation_list) || new_priority > thread_current()->priority)
   {
-    thread_current()->priority = new_priority;
+      thread_current()->priority = new_priority;
   }
 
-  // Si la lista de hilos listos no está vacía, verifica si es necesario ceder el procesador.
-  if (!list_empty(&ready_list))
+  if(!list_empty(&ready_list))
   {
-    // Obtiene el hilo de mayor prioridad en la lista de hilos listos.
-    struct thread *front = list_entry(list_front(&ready_list), struct thread, elem);
-
-    // Compara la prioridad del hilo actual con el de mayor prioridad en la lista de hilos listos.
-    if (front->priority > thread_current()->priority)
-      thread_yield(); // Cede el procesador si es necesario.
+    struct thread *front = list_entry (list_front(&ready_list), struct thread, elem);
+    if(front->priority > thread_current ()->priority)
+      thread_yield();
   }
 
-  // Restaura las interrupciones al nivel original.
   intr_set_level(old_level);
-}
 
+  /* $$$$ Our magical changes end  */
+
+}
 
 /* Returns the current thread's priority. */
 int
@@ -567,49 +517,35 @@ is_thread (struct thread *t)
   return t != NULL && t->magic == THREAD_MAGIC;
 }
 
-
-// La función init_thread se encarga de inicializar la estructura de datos asociada a un hilo
-
+/* Does basic initialization of T as a waiting_on_lock thread named
+   NAME. */
 static void
-init_thread(struct thread *t, const char *name, int priority)
+init_thread (struct thread *t, const char *name, int priority)
 {
-  // Deshabilita las interrupciones para garantizar la consistencia durante la operación.
   enum intr_level old_level;
 
-  // Verifica que la estructura del hilo no sea nula y que la prioridad esté en el rango permitido.
-  ASSERT(t != NULL);
-  ASSERT(PRI_MIN <= priority && priority <= PRI_MAX);
-  ASSERT(name != NULL);
+  ASSERT (t != NULL);
+  ASSERT (PRI_MIN <= priority && priority <= PRI_MAX);
+  ASSERT (name != NULL);
 
-  // Inicializa la estructura de datos del hilo con ceros.
-  memset(t, 0, sizeof *t);
-  // Establece el estado del hilo como THREAD_BLOCKED, ya que se inicializa como bloqueado.
+  memset (t, 0, sizeof *t);
   t->status = THREAD_BLOCKED;
-  // Copia el nombre del hilo a la estructura de datos del hilo.
-  strlcpy(t->name, name, sizeof t->name);
-  // Establece el puntero de la pila al final de la página asignada al hilo.
-  t->stack = (uint8_t *)t + PGSIZE;
-  // Establece la prioridad base del hilo.
-  t->basepriority = priority;
-  // Establece la prioridad actual del hilo.
+  strlcpy (t->name, name, sizeof t->name);
+  t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
-  // Inicializa la lista de donaciones de prioridad del hilo.
-  list_init(&t->donation_list);
-  // Inicializa el puntero al hilo que posee el bloqueo que el hilo está esperando.
-  t->locker_thread = NULL;
-  // Inicializa el puntero al bloqueo del cual el hilo está esperando su liberación.
-  t->waiting_on_lock = NULL;
-  // Establece la marca mágica del hilo para ayudar a detectar posibles corrupciones de datos.
   t->magic = THREAD_MAGIC;
 
-  // Deshabilita temporalmente las interrupciones para evitar problemas de concurrencia.
-  old_level = intr_disable();
-  // Agrega el hilo recién inicializado a la lista global de todos los hilos.
-  list_push_back(&all_list, &t->allelem);
-  // Restaura el nivel de interrupción a su estado original.
-  intr_set_level(old_level);
-}
+  /* $$$$ Our magical changes here */
+  list_init(&t->donation_list);
+  t->basepriority=priority;
+  t->locker_thread=NULL;
+  t->waiting_on_lock=NULL;
 
+  /* $$$$ Our magical changes end  */
+  old_level = intr_disable ();
+  list_push_back (&all_list, &t->allelem);
+  intr_set_level (old_level);
+}
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
    returns a pointer to the frame's base. */

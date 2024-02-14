@@ -59,31 +59,25 @@ sema_init (struct semaphore *sema, unsigned value)
    interrupts disabled, but if it sleeps then the next scheduled
    thread will probably turn interrupts back on. */
 void
-sema_down(struct semaphore *sema) {
-  ASSERT(sema != NULL);
-  ASSERT(!intr_context());
+sema_down (struct semaphore *sema)
+{
+  enum intr_level old_level;
 
-  // Deshabilita interrupciones para acceso atómico
-  enum intr_level old_level = intr_disable();
+  ASSERT (sema != NULL);
+  ASSERT (!intr_context ());
 
-  // Ciclo principal de espera si el valor del semáforo es 0
-  while (sema->value == 0) {
-
-    // **Magia: Inserción ordenada por prioridad en la lista de espera**
-    list_insert_ordered(&sema->waiters, &thread_current()->elem,
-                        (list_less_func *) &priority_comparator, NULL);
-
-    // El hilo se bloquea a sí mismo esperando que el semáforo esté disponible
-    thread_block();
-  }
-
-  // El semáforo tiene permisos, decrementamos su valor
+  old_level = intr_disable ();
+  while (sema->value == 0)
+    {
+      /* $$$$ Our magical changes here */
+      //insert in waiting list, sorted according to priority so that highest priority thread is awakened first
+      list_insert_ordered (&sema->waiters, &thread_current ()->elem,(list_less_func *) &priority_comparator,NULL);
+      /* $$$$ Our magical changes end */
+      thread_block ();
+    }
   sema->value--;
-
-  // Restaura el nivel de interrupciones
-  intr_set_level(old_level);
+  intr_set_level (old_level);
 }
-
 
 /* Down or "P" operation on a semaphore, but only if the
    semaphore is not already 0.  Returns true if the semaphore is
@@ -116,41 +110,29 @@ sema_try_down (struct semaphore *sema)
 
    This function may be called from an interrupt handler. */
 void
-sema_up(struct semaphore *sema) {
-  ASSERT(sema != NULL);
+sema_up (struct semaphore *sema)
+{
+  enum intr_level old_level;
 
-  // Deshabilitar interrupciones para acceso atómico
-  enum intr_level old_level = intr_disable();
+  ASSERT (sema != NULL);
 
-  // Si no hay hilos esperando, simplemente incrementamos el valor del semáforo y salimos
-  if (list_empty(&sema->waiters)) {
-    sema->value++;
-    intr_set_level(old_level);
-    return;
+  old_level = intr_disable ();
+
+  /* $$$$ Our magical changes here */
+  struct list_elem *father_element;
+  if (!list_empty (&sema->waiters)){
+
+    list_sort(&sema->waiters,(list_less_func *) &priority_comparator,NULL);  //sort waiter list to assure that they are in descending order
+    father_element=list_pop_front(&sema->waiters);    //remove thread with highest priority
+    thread_unblock(list_entry(father_element,struct thread,elem));
+  /* $$$$ Our magical changes end  */
+
   }
-
-  // Hay hilos esperando en la lista `waiters`
-
-  // 1. Ordenar la lista de hilos esperando por prioridad descendente
-  list_sort(&sema->waiters, (list_less_func *) &priority_comparator, NULL);
-
-  // 2. Despertar al primer hilo de la lista (el de mayor prioridad)
-  struct list_elem *father_element = list_pop_front(&sema->waiters);
-  struct thread *awakened_thread = list_entry(father_element, struct thread, elem);
-  thread_unblock(awakened_thread);
-
-  // 3. Incrementar el valor del semáforo
   sema->value++;
-
-  // 4. Restaurar nivel de interrupciones
-  intr_set_level(old_level);
-
-  // 5. Ceder el procesador si no estamos en contexto de interrupción
-  if (!intr_context()) {
+  intr_set_level (old_level);
+  if (!intr_context())
     thread_yield();
-  }
 }
-
 
 static void sema_test_helper (void *sema_);
 
