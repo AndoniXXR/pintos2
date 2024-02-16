@@ -4,7 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
-
+#include "threads/synch.h"
 /* States in a thread's life cycle. */
 enum thread_status
   {
@@ -18,7 +18,6 @@ enum thread_status
    You can redefine this to whatever type you like. */
 typedef int tid_t;
 #define TID_ERROR ((tid_t) -1)          /* Error value for tid_t. */
-
 
 /* Thread priorities. */
 #define PRI_MIN 0                       /* Lowest priority. */
@@ -80,7 +79,7 @@ typedef int tid_t;
    semaphore wait list (synch.c).  It can be used these two ways
    only because they are mutually exclusive: only a thread in the
    ready state is on the run queue, whereas only a thread in the
-   waiting_on_lock state is on a semaphore wait list. */
+   blocked state is on a semaphore wait list. */
 struct thread
   {
     /* Owned by thread.c. */
@@ -89,18 +88,12 @@ struct thread
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
-
-    /* $$$$ Our magical changes here $$$$ */
-    int64_t sleepingtime;  //
-    int basepriority;
-    struct thread *locker_thread;    //lock I am waiting for is acquired by this thread
-    struct list donation_list;       //list of all donated priorities (to me)
-    struct lock *waiting_on_lock;    //lock on which I am waiting
-    struct list_elem donorelem;      //list element for donations_list
-    /* $$$$ Our magical changes end  $$$$ */
-
+    int priorities[9];                  /* Donated Priority List */
+    int size;                           /* Size of donated priority list */
     struct list_elem allelem;           /* List element for all threads list. */
-
+    int64_t wakeup_time;                /* WakeUp time for a sleeping thread. */
+    int donation_no;                    /* Store the number of donation locks */
+    struct lock *waiting_for;           /* Lock for which a blocked thread waits */
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
@@ -148,11 +141,8 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
-
-/* $$$$ Our magical changes here */
-bool sleeptime_comparator(struct list_elem *a, struct list_elem *b, void *aux);
-bool priority_comparator(struct list_elem *a, struct list_elem *b, void *aux);
-bool priority_comparator_reverse(struct list_elem *a, struct list_elem *b, void *aux);
-/* $$$$ Our magical changes end  */
+bool compare_priority(struct list_elem *l1, struct list_elem *l2, void *aux);
+void sort_ready_list(void);
+void search_array(struct thread *cur,int elem);
 
 #endif /* threads/thread.h */
